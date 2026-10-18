@@ -538,6 +538,7 @@ h1,h2,h3,.ob-logo,.ob-step-title,.hdr-name,.t-val,.pprice,.e-amt,.ov-title,.cmv,
     <button class="stg-tab" onclick="stgTab(this,'stg-cats')">🏷 Categories</button>
     <button class="stg-tab" onclick="stgTab(this,'stg-team')">👥 Equipe</button>
     <button class="stg-tab" onclick="stgTab(this,'stg-theme')">🎨 Theme</button>
+    <button class="stg-tab" onclick="stgTab(this,'stg-sync')">🎟 Carte fidélité</button>
   </div>
   <div class="stg-body">
     <div id="stg-theme" style="display:none;">
@@ -578,6 +579,23 @@ h1,h2,h3,.ob-logo,.ob-step-title,.hdr-name,.t-val,.pprice,.e-amt,.ov-title,.cmv,
       <div id="stg-clist"></div>
       <button class="stg-add" onclick="stgAddCollab()">+ Ajouter un collaborateur</button>
       <button class="stg-save" onclick="saveCollabs()">Enregistrer</button>
+    </div>
+    <div id="stg-sync" style="display:none;">
+      <div id="sb-panel">
+        <div class="stg-section">Carte fidélité Pheno &amp; Co</div>
+        <div style="font-size:12px;color:var(--txt-dim);margin-bottom:14px;line-height:1.5;">Quand tu tamponnes un client et que tu indiques « Espèces » ou « Carte (SumUp) » dans l'espace gérant, l'encaissement arrive ici tout seul, au bon jour et à la bonne heure. Il compte dans le journal, le bilan et le PDF.</div>
+        <div id="sb-off">
+          <div class="field"><label>E-mail du compte gérant</label><input type="email" id="sb-email" autocomplete="username" placeholder="phenoandco@gmail.com"></div>
+          <div class="field"><label>Mot de passe (le même que l'espace gérant)</label><input type="password" id="sb-pass" autocomplete="current-password"></div>
+          <button class="stg-save" onclick="sbLogin()">Relier la caisse à la carte</button>
+          <div id="sb-msg" style="font-size:12px;color:var(--red-tech);margin-top:10px;"></div>
+        </div>
+        <div id="sb-on" style="display:none;">
+          <div id="sb-status" style="font-size:14px;color:var(--copper-main);font-weight:600;margin-bottom:14px;"></div>
+          <button class="stg-save" onclick="sbSync(true)">Mettre à jour maintenant</button>
+          <button onclick="sbLogout()" style="width:100%;margin-top:12px;padding:12px;background:transparent;border:1px dashed rgba(150,126,103,0.3);border-radius:10px;color:rgba(150,126,103,0.8);font-size:13px;cursor:pointer;font-family:Inter,sans-serif;">Déconnecter</button>
+        </div>
+      </div>
     </div>
     <div id="stg-prefs" style="display:none;">
       <div class="stg-section">Données</div>
@@ -1076,7 +1094,7 @@ function saveCatNamesFromForm() {
 function stgOpenTheme() {
   stgOpen();
   var tabs = document.querySelectorAll('.stg-tab');
-  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs'];
+  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs','stg-sync'];
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('on');
   for (var j = 0; j < sections.length; j++) {
     var el = document.getElementById(sections[j]);
@@ -1682,7 +1700,7 @@ function renderJournal() {
     var ph = e.photo ? '<img src="'+e.photo+'" style="width:50px;height:35px;object-fit:cover;border-radius:5px;margin-top:4px;">' : '';
     html += '<div class="entry'+(isOut?' out':'')+'">';
     html += '<div class="e-icon">'+icon+'</div>';
-    html += '<div class="e-info"><div class="e-name">'+e.name+'</div><div class="e-meta">'+e.time+' · '+e.collab+' · '+lbl+'</div>'+ph+'</div>';
+    html += '<div class="e-info"><div class="e-name">'+e.name+'</div><div class="e-meta">'+e.time+' · '+e.collab+' · '+lbl+(e.src==='carte'?' · 🎟 Carte':'')+'</div>'+ph+'</div>';
     html += '<div class="e-amt '+cls+'">'+amtStr+'</div>';
     html += '<button class="e-del" id="del'+e.id+'">✕</button></div>';
   }
@@ -1763,7 +1781,7 @@ function stgOpen() {
   renderThemeGrid();
   renderStgCats();
   // Toujours ouvrir sur l'onglet Salon
-  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs'];
+  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs','stg-sync'];
   for (var j = 0; j < sections.length; j++) {
     var el = document.getElementById(sections[j]);
     if (el) el.style.display = sections[j] === 'stg-salon' ? 'block' : 'none';
@@ -1780,13 +1798,14 @@ function stgTab(btn, id) {
   var tabs = document.querySelectorAll('.stg-tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('on');
   btn.classList.add('on');
-  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs'];
+  var sections = ['stg-salon','stg-prestas','stg-cats','stg-team','stg-theme','stg-prefs','stg-sync'];
   for (var j = 0; j < sections.length; j++) {
     var el = document.getElementById(sections[j]);
     if (el) el.style.display = sections[j] === id ? 'block' : 'none';
   }
   if (id === 'stg-cats') renderStgCats();
   if (id === 'stg-theme') renderThemeGrid();
+  if (id === 'stg-sync' && typeof sbRenderPanel === 'function') sbRenderPanel();
 }
 
 function saveSalon() {
@@ -3842,5 +3861,144 @@ function ncsImportBackup(file) {
 }
 document.getElementById('ncs-ov').addEventListener('click', function(e){ if (e.target===this) ncsClose(); });
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// ── LIAISON CARTE FIDÉLITÉ (Supabase Pheno & Co) ──
+// Les encaissements notés depuis l'espace gérant de la carte arrivent ici,
+// au bon jour, à la bonne heure, en espèces ou en carte. Les données déjà
+// présentes dans la caisse ne sont jamais modifiées.
+var SB_URL = 'https://ebqxrrnezngpvewvlupr.supabase.co';
+var SB_KEY = 'sb_publishable_atOLxKckdSSkyMh8wu8R5A__-7ICqN_';
+var SB = null, SB_SALON = null, SB_LAST = null, SB_BUSY = false, SB_TIMER = null;
+
+function sbLS(k, v) {
+  try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; }
+}
+function sbDeleted() { try { return JSON.parse(sbLS('naya_pnc_deleted') || '[]'); } catch (e) { return []; } }
+function sbSetDeleted(a) { sbLS('naya_pnc_deleted', JSON.stringify(a.slice(-500))); }
+function sbDayKey(d) { var m = d.getMonth() + 1, j = d.getDate(); return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (j < 10 ? '0' + j : j); }
+function sbTime(d) { var h = d.getHours(), m = d.getMinutes(); return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m); }
+
+function sbInit() {
+  if (!window.supabase || SB) return;
+  SB = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'naya_pnc_auth' } });
+  SB_SALON = sbLS('naya_pnc_salon');
+  SB.auth.getSession().then(function (r) {
+    if (r.data && r.data.session && SB_SALON) { sbStart(); }
+    sbRenderPanel();
+  });
+}
+
+async function sbLogin() {
+  var em = document.getElementById('sb-email').value.trim(), pw = document.getElementById('sb-pass').value;
+  var msg = document.getElementById('sb-msg');
+  if (!em || !pw) { msg.textContent = 'Entre ton e-mail et ton mot de passe.'; return; }
+  sbInit(); if (!SB) { msg.textContent = 'Pas de connexion internet.'; return; }
+  msg.textContent = 'Connexion…';
+  var r = await SB.auth.signInWithPassword({ email: em, password: pw });
+  if (r.error) { msg.textContent = 'E-mail ou mot de passe incorrect.'; return; }
+  var m = await SB.from('salon_members').select('salon_id').limit(1).maybeSingle();
+  if (m.error || !m.data) { msg.textContent = 'Ce compte n\'est relié à aucun salon.'; await SB.auth.signOut(); return; }
+  SB_SALON = m.data.salon_id; sbLS('naya_pnc_salon', SB_SALON);
+  document.getElementById('sb-pass').value = '';
+  msg.textContent = '';
+  sbStart(); sbRenderPanel();
+}
+
+async function sbLogout() {
+  if (!confirm('Déconnecter la carte fidélité ? Les encaissements déjà reçus restent dans la caisse.')) return;
+  if (SB) await SB.auth.signOut();
+  SB_SALON = null; sbLS('naya_pnc_salon', null); clearInterval(SB_TIMER); SB_TIMER = null;
+  sbRenderPanel();
+}
+
+function sbStart() {
+  sbSync(false);
+  clearInterval(SB_TIMER);
+  SB_TIMER = setInterval(function () { if (!document.hidden) sbSync(false); }, 60000);
+}
+
+async function sbSync(manual) {
+  if (!SB || !SB_SALON || SB_BUSY) return;
+  SB_BUSY = true;
+  try {
+    var since = new Date(Date.now() - 120 * 86400000).toISOString();
+    var r = await SB.from('payments')
+      .select('id, label, amount_cents, cash_cents, card_cents, paid_at, voided, clients(first_name)')
+      .eq('salon_id', SB_SALON).gte('paid_at', since).order('paid_at', { ascending: true }).limit(5000);
+    if (r.error) { if (manual) toast('Synchro impossible', 'red'); return; }
+    var deleted = sbDeleted(), index = {}, touched = {}, added = 0;
+    for (var day in S.entries) {
+      for (var i = 0; i < S.entries[day].length; i++) {
+        var ex = S.entries[day][i];
+        if (typeof ex.id === 'string' && ex.id.indexOf('sb_') === 0) index[ex.id] = day;
+      }
+    }
+    (r.data || []).forEach(function (p) {
+      var key = 'sb_' + p.id, oldDay = index[key];
+      var gone = p.voided || deleted.indexOf(key) >= 0;
+      if (oldDay) {
+        S.entries[oldDay] = S.entries[oldDay].filter(function (e) { return e.id !== key; });
+        touched[oldDay] = true;
+      }
+      if (gone) return;
+      var d = new Date(p.paid_at), dk = sbDayKey(d);
+      var cash = (p.cash_cents || 0) / 100, card = (p.card_cents || 0) / 100;
+      var who = p.clients && p.clients.first_name ? ' · ' + p.clients.first_name : '';
+      var entry = {
+        id: key, type: 'in', src: 'carte',
+        name: (p.label || 'Prestation') + who,
+        amt: p.amount_cents / 100, espAmt: cash, cbAmt: card,
+        mode: cash && card ? 'mix' : card ? 'cb' : 'esp',
+        collab: (S.collabs && S.collabs[0]) || 'Moi',
+        time: sbTime(d), date: dk
+      };
+      if (!S.entries[dk]) S.entries[dk] = [];
+      S.entries[dk].push(entry); touched[dk] = true;
+      if (!oldDay) added++;
+    });
+    var changed = false;
+    for (var t in touched) {
+      changed = true;
+      S.entries[t].sort(function (a, b) { return String(a.time || '').localeCompare(String(b.time || '')); });
+      if (!S.entries[t].length) delete S.entries[t];
+    }
+    SB_LAST = new Date();
+    if (changed) { save(); renderJournal(); updateTotaux(); }
+    if (added) toast(added === 1 ? '1 encaissement reçu de la carte' : added + ' encaissements reçus de la carte', 'green');
+    else if (manual) toast('Caisse à jour', 'green');
+    sbRenderPanel();
+  } catch (e) {
+    if (manual) toast('Synchro impossible', 'red');
+  } finally { SB_BUSY = false; }
+}
+
+// Supprimer dans la caisse une ligne venue de la carte l'annule aussi côté carte
+var _nayaDeleteEntry = deleteEntry;
+deleteEntry = function (id) {
+  if (typeof id === 'string' && id.indexOf('sb_') === 0) {
+    if (!confirm('Supprimer cet encaissement ? Il sera aussi annulé dans l\'espace gérant de la carte.')) return;
+    for (var date in S.entries) S.entries[date] = S.entries[date].filter(function (e) { return e.id !== id; });
+    var del = sbDeleted(); if (del.indexOf(id) < 0) { del.push(id); sbSetDeleted(del); }
+    save(); renderJournal(); updateTotaux(); toast('Supprime', 'red');
+    if (SB && SB_SALON) SB.from('payments').update({ voided: true }).eq('id', id.slice(3)).then(function () {});
+    return;
+  }
+  return _nayaDeleteEntry(id);
+};
+
+function sbRenderPanel() {
+  var box = document.getElementById('sb-panel'); if (!box) return;
+  var on = !!SB_SALON;
+  document.getElementById('sb-off').style.display = on ? 'none' : 'block';
+  document.getElementById('sb-on').style.display = on ? 'block' : 'none';
+  var st = document.getElementById('sb-status');
+  if (st) st.textContent = on ? ('Reliée ✓' + (SB_LAST ? ' · dernière mise à jour à ' + sbTime(SB_LAST) : '')) : '';
+}
+
+document.addEventListener('visibilitychange', function () { if (!document.hidden) sbSync(false); });
+window.addEventListener('load', function () { setTimeout(function () { sbInit(); sbRenderPanel(); }, 300); });
+</script>
+
 </body>
 </html>
