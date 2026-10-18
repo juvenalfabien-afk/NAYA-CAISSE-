@@ -583,7 +583,7 @@ h1,h2,h3,.ob-logo,.ob-step-title,.hdr-name,.t-val,.pprice,.e-amt,.ov-title,.cmv,
     <div id="stg-sync" style="display:none;">
       <div id="sb-panel">
         <div class="stg-section">Carte fidélité Pheno &amp; Co</div>
-        <div style="font-size:12px;color:var(--txt-dim);margin-bottom:14px;line-height:1.5;">Quand tu tamponnes un client et que tu indiques « Espèces » ou « Carte (SumUp) » dans l'espace gérant, l'encaissement arrive ici tout seul, au bon jour et à la bonne heure. Il compte dans le journal, le bilan et le PDF.</div>
+        <div style="font-size:12px;color:var(--txt-dim);margin-bottom:14px;line-height:1.5;">Quand tu tamponnes un client et que tu indiques « Espèces » ou « Carte (SumUp) » dans l'espace gérant, l'encaissement arrive ici tout seul, au bon jour et à la bonne heure. Dans l'autre sens, ce que tu encaisses ici apparaît aussi dans le dashboard. Les deux affichent les mêmes chiffres.</div>
         <div id="sb-off">
           <div class="field"><label>E-mail du compte gérant</label><input type="email" id="sb-email" autocomplete="username" placeholder="phenoandco@gmail.com"></div>
           <div class="field"><label>Mot de passe (le même que l'espace gérant)</label><input type="password" id="sb-pass" autocomplete="current-password"></div>
@@ -3883,6 +3883,7 @@ function sbInit() {
   if (!window.supabase || SB) return;
   SB = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'naya_pnc_auth' } });
   SB_SALON = sbLS('naya_pnc_salon');
+  if (SB_SALON && !sbLS('naya_pnc_since')) sbLS('naya_pnc_since', String(Date.now()));
   SB.auth.getSession().then(function (r) {
     if (r.data && r.data.session && SB_SALON) { sbStart(); }
     sbRenderPanel();
@@ -3900,6 +3901,7 @@ async function sbLogin() {
   var m = await SB.from('salon_members').select('salon_id').limit(1).maybeSingle();
   if (m.error || !m.data) { msg.textContent = 'Ce compte n\'est relié à aucun salon.'; await SB.auth.signOut(); return; }
   SB_SALON = m.data.salon_id; sbLS('naya_pnc_salon', SB_SALON);
+  if (!sbLS('naya_pnc_since')) sbLS('naya_pnc_since', String(Date.now()));
   document.getElementById('sb-pass').value = '';
   msg.textContent = '';
   sbStart(); sbRenderPanel();
@@ -3918,23 +3920,68 @@ function sbStart() {
   SB_TIMER = setInterval(function () { if (!document.hidden) sbSync(false); }, 60000);
 }
 
+function sbUuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+}
+
+// Encaissements tapés dans la caisse → envoyés au dashboard (uniquement ceux faits après la liaison)
+async function sbPush() {
+  var since = +(sbLS('naya_pnc_since') || 0), changed = false;
+  if (!since) return;
+  for (var day in S.entries) {
+    var list = S.entries[day];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e.type !== 'in' || e.src === 'carte' || e.sbOk || typeof e.id !== 'number' || e.id < since || !(e.amt > 0)) continue;
+      if (!e.sbid) { e.sbid = sbUuid(); save(); }
+      var cents = Math.round(e.amt * 100);
+      var cash = Math.min(cents, Math.max(0, Math.round((e.espAmt || 0) * 100)));
+      if (e.mode === 'esp') cash = cents;
+      if (e.mode === 'cb') cash = 0;
+      var card = cents - cash;
+      var when = new Date((e.date || day) + 'T' + (e.time || '12:00') + ':00');
+      if (isNaN(when.getTime())) when = new Date();
+      var r = await SB.from('payments').insert({
+        id: e.sbid, salon_id: SB_SALON, label: e.name || 'Prestation',
+        amount_cents: cents, cash_cents: cash, card_cents: card,
+        method: cash && card ? 'mixed' : card ? 'card' : 'cash',
+        counts_for_loyalty: false, paid_at: when.toISOString()
+      });
+      if (!r.error || r.error.code === '23505') { e.sbOk = true; changed = true; }
+    }
+  }
+  if (changed) save();
+}
+
 async function sbSync(manual) {
   if (!SB || !SB_SALON || SB_BUSY) return;
   SB_BUSY = true;
   try {
+    await sbPush();
     var since = new Date(Date.now() - 120 * 86400000).toISOString();
     var r = await SB.from('payments')
       .select('id, label, amount_cents, cash_cents, card_cents, paid_at, voided, clients(first_name)')
       .eq('salon_id', SB_SALON).gte('paid_at', since).order('paid_at', { ascending: true }).limit(5000);
     if (r.error) { if (manual) toast('Synchro impossible', 'red'); return; }
-    var deleted = sbDeleted(), index = {}, touched = {}, added = 0;
+    var deleted = sbDeleted(), index = {}, own = {}, touched = {}, added = 0;
     for (var day in S.entries) {
       for (var i = 0; i < S.entries[day].length; i++) {
         var ex = S.entries[day][i];
         if (typeof ex.id === 'string' && ex.id.indexOf('sb_') === 0) index[ex.id] = day;
+        else if (ex.sbid) own[ex.sbid] = { day: day, id: ex.id };
       }
     }
     (r.data || []).forEach(function (p) {
+      if (own[p.id]) {
+        // Encaissement venu de la caisse : annulé depuis le dashboard → on le retire ici aussi
+        if (p.voided) {
+          var o = own[p.id];
+          S.entries[o.day] = S.entries[o.day].filter(function (e) { return e.id !== o.id; });
+          touched[o.day] = true;
+        }
+        return;
+      }
       var key = 'sb_' + p.id, oldDay = index[key];
       var gone = p.voided || deleted.indexOf(key) >= 0;
       if (oldDay) {
@@ -3984,7 +4031,21 @@ deleteEntry = function (id) {
     if (SB && SB_SALON) SB.from('payments').update({ voided: true }).eq('id', id.slice(3)).then(function () {});
     return;
   }
-  return _nayaDeleteEntry(id);
+  var target = null;
+  for (var dd in S.entries) for (var k = 0; k < S.entries[dd].length; k++) if (S.entries[dd][k].id === id) target = S.entries[dd][k];
+  var res = _nayaDeleteEntry(id);
+  var still = false;
+  for (var d2 in S.entries) for (var k2 = 0; k2 < S.entries[d2].length; k2++) if (S.entries[d2][k2].id === id) still = true;
+  if (target && target.sbid && !still && SB && SB_SALON) SB.from('payments').update({ voided: true }).eq('id', target.sbid).then(function () {});
+  return res;
+};
+
+// Nouvel encaissement tapé dans la caisse → envoyé au dashboard tout de suite
+var _nayaAddEntry = addEntry;
+addEntry = function (entry) {
+  var res = _nayaAddEntry(entry);
+  if (entry && entry.type === 'in' && SB && SB_SALON) setTimeout(function () { sbSync(false); }, 300);
+  return res;
 };
 
 function sbRenderPanel() {
